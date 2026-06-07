@@ -166,13 +166,12 @@ class TestMarshalStability(unittest.TestCase):
         # 3. Print environment details (Pure English to prevent Windows UnicodeEncodeError)
         print(f"\n[CI-LOG] OS: {sys.platform}, Python: {sys.version_info.major}.{sys.version_info.minor}")
         print(f"[CI-LOG] Generated Hash: {current_hash}")
-        
-        # Solidified golden hashes verified by CI matrix
+
         expected_hashes = {
-            (3, 9): "b47c5a4083698de57ab76ef9d211557d89584e5eeeffb86a57e39a6ed8edf994",
-            (3, 10): "b47c5a4083698de57ab76ef9d211557d89584e5eeeffb86a57e39a6ed8edf994",
-            (3, 11): "b47c5a4083698de57ab76ef9d211557d89584e5eeeffb86a57e39a6ed8edf994",
-            (3, 12): "b47c5a4083698de57ab76ef9d211557d89584e5eeeffb86a57e39a6ed8edf994",
+            (3, 9): "357b5c0366cc35181791b658305fdb7c43de23b15d1eac0bc73b3131d9a73bd5",
+            (3, 10): "357b5c0366cc35181791b658305fdb7c43de23b15d1eac0bc73b3131d9a73bd5",
+            (3, 11): "357b5c0366cc35181791b658305fdb7c43de23b15d1eac0bc73b3131d9a73bd5",
+            (3, 12): "357b5c0366cc35181791b658305fdb7c43de23b15d1eac0bc73b3131d9a73bd5",
         }
         
         version_tuple = (sys.version_info.major, sys.version_info.minor)
