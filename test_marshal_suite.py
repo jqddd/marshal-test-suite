@@ -156,14 +156,14 @@ class TestMarshalStability(unittest.TestCase):
         Ensures that marshal.dumps() outputs identical byte streams 
         across different operating systems for the same Python version.
         """
-        # 1. Define standard test data
-        standard_data = {"key": [1, 2, 3], "value": "跨平台测试"}
+        # 1. Define standard test data (Changed to pure English to prevent any encoding side-effects)
+        standard_data = {"key": [1, 2, 3], "value": "CrossPlatformTestData"}
         
         # 2. Generate bytes and calculate SHA-256 hash
         dumped_bytes = marshal.dumps(standard_data)
         current_hash = hashlib.sha256(dumped_bytes).hexdigest()
         
-        # 3. Print environment details (Changed to pure English to prevent Windows UnicodeEncodeError)
+        # 3. Print environment details (Pure English to prevent Windows UnicodeEncodeError)
         print(f"\n[CI-LOG] OS: {sys.platform}, Python: {sys.version_info.major}.{sys.version_info.minor}")
         print(f"[CI-LOG] Generated Hash: {current_hash}")
         
