@@ -219,10 +219,11 @@ print(hashlib.sha256(marshal.dumps(test_set)).hexdigest(), end="")
         
         # 1. 在古老的 v0 协议中，没有 FLAG_REF 引用追踪，必定会抛出嵌套异常
         with self.assertRaises(ValueError):
-            marshal.dumps(cyclic, version=0)
+            marshal.dumps(cyclic, 0)  # 修复：直接传位置参数 0
             
         # 2. 在现代 v3+ 协议中，必须能完美序列化
-        dumped_v3 = marshal.dumps(cyclic, version=3)
+        dumped_v3 = marshal.dumps(cyclic, 3)  # 修复：直接传位置参数 3
+        self.assertIsInstance(dumped_v3, bytes)
         
 
     def test_shared_reference_identity(self):
@@ -235,7 +236,7 @@ print(hashlib.sha256(marshal.dumps(test_set)).hexdigest(), end="")
         main_list = [shared_dict, shared_dict]
         
         # 使用协议 v3+ 进行序列化和反序列化
-        loaded = marshal.loads(marshal.dumps(main_list, version=3))
+        loaded = marshal.loads(marshal.dumps(main_list, 3))  # 修复：直接传位置参数 3
         
         # 断言：反序列化后，列表的第一个元素和第二个元素必须在内存中是同一个对象 (is 关键字)
         self.assertIs(loaded[0], loaded[1], "Shared object identity was lost during unmarshalling!")
