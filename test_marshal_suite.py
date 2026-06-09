@@ -18,17 +18,29 @@ class TestMarshalStability(unittest.TestCase):
     # 区域 1：确定性与稳定区 (Deterministic Baseline)
     # ==============================================================================
 
-    def test_primitive_determinism(self):
+
+    def test_primitive_determinism_and_correctness(self):
         """
         Black-box - Equivalence Partitioning (EP):
-        Verifies that standard primitive types produce cross-platform hash-identical streams.
+        Verifies both Cross-Serialization Determinism AND Round-trip Correctness.
         """
         data = [1024, -1024, "A standard string", b"A byte string", True, False, None]
         for item in data:
             with self.subTest(item=item):
-                dump1 = marshal.dumps(item)
-                dump2 = marshal.dumps(item)
-                self.assertEqual(dump1, dump2, "Primitives must be stable within the same context.")
+                dumped = marshal.dumps(item)
+                
+                # 1. 测试确定性 (Determinism - 契合作业核心要求)
+                self.assertEqual(
+                    dumped, marshal.dumps(item), 
+                    "Primitives must produce deterministic byte streams."
+                )
+                
+                # 2. 测试正确性/可逆性 (Round-trip Correctness - 你的核心洞察)
+                self.assertEqual(
+                    item, marshal.loads(dumped), 
+                    "Deserialized object must mathematically equal the original input."
+                )
+
 
     def test_integer_boundary_values(self):
         """
@@ -157,6 +169,77 @@ print(hashlib.sha256(marshal.dumps(test_set)).hexdigest(), end="")
         # exposing the version instability that the assignment text warns about!
         reference_312_hash = "64-bit-hash-placeholder-or-dynamic" 
         print("Note: Code objects serialize differently across major releases due to AST and compiler optimizations.")
+    
+    def test_fuzzing_malformed_bytes(self):
+        """
+        Black-box - Fuzzing / Robustness:
+        向 marshal.loads 注入随机畸形字节流，验证底层 C 语言解析器
+        是否会发生内存越界崩溃，还是能安全地抛出 Python 异常。
+        """
+        # 伪造一个非法的标识符 'x'，或者长度被恶意篡改的字符串头
+        malformed_streams = [
+            b'x\x00\x00\x00\x00',          # 未知的类型标识符
+            b's\xff\xff\xff\xffbad_data',  # 声明了超大长度但数据截断的字符串
+            b'(',                          # 只有元组开始符，没有内容
+            b'\xda' * 100                  # 纯粹的垃圾内存数据
+        ]
+        
+        for bad_stream in malformed_streams:
+            with self.subTest(stream=bad_stream):
+                # 预期行为：必须安全地抛出异常，绝对不能让解释器硬崩溃
+                with self.assertRaises((ValueError, EOFError, TypeError)):
+                    marshal.loads(bad_stream)
+
+    
+    def test_extreme_deep_nesting(self):
+        """
+        Black-box - Boundary Value Analysis (Vertical Depth):
+        测试极其深层的嵌套结构，验证 marshal 的递归深度保护机制。
+        """
+        # 构造一个深度为 5000 层的俄罗斯套娃列表：[[[[...]]]]
+        deep_obj = None
+        for _ in range(5000):
+            deep_obj = [deep_obj]
+            
+        # 预期行为：marshal 底层必须有深度防御机制，主动抛出 ValueError，而不是把 C 堆栈撑爆
+        with self.assertRaises(ValueError) as context:
+            marshal.dumps(deep_obj)
+            
+        self.assertIn("object too deeply nested", str(context.exception))
+    
+
+    def test_protocol_version_degradation(self):
+        """
+        White-box - Protocol Version Analysis:
+        对比旧版协议 (v0) 与新版协议 (v3+) 的健壮性差异。
+        """
+        # 构造一个包含循环引用的对象
+        cyclic = []
+        cyclic.append(cyclic)
+        
+        # 1. 在古老的 v0 协议中，没有 FLAG_REF 引用追踪，必定会抛出嵌套异常
+        with self.assertRaises(ValueError):
+            marshal.dumps(cyclic, version=0)
+            
+        # 2. 在现代 v3+ 协议中，必须能完美序列化
+        dumped_v3 = marshal.dumps(cyclic, version=3)
+        
+
+    def test_shared_reference_identity(self):
+        """
+        White-box - Internal Logic Coverage (Object Pool & Identity):
+        测试非循环的共享引用，验证反序列化后对象的内存身份 (id) 是否被正确复原。
+        """
+        shared_dict = {"secret": 42}
+        # main_list 里的两个元素指向内存中的同一个字典
+        main_list = [shared_dict, shared_dict]
+        
+        # 使用协议 v3+ 进行序列化和反序列化
+        loaded = marshal.loads(marshal.dumps(main_list, version=3))
+        
+        # 断言：反序列化后，列表的第一个元素和第二个元素必须在内存中是同一个对象 (is 关键字)
+        self.assertIs(loaded[0], loaded[1], "Shared object identity was lost during unmarshalling!")
+
 
 
 if __name__ == "__main__":
