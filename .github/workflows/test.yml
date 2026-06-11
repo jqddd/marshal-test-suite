@@ -1,34 +1,41 @@
 name: Marshal Stability Tests
 
-# 触发条件：当有代码推送到 main 分支，或者提交 Pull Request 时运行
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
-  build:
-    name: Test on ${{ matrix.os }} with Python ${{ matrix.python-version }}
-    
-    # 核心：矩阵策略 (Matrix Strategy)
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ['3.9', '3.10', '3.11', '3.12']
-
-    # 指定运行的操作系统（从上面的矩阵中读取）
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
 
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
     steps:
-    - name: 检出代码 (Checkout code)
-      uses: actions/checkout@v3
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-    - name: 设置 Python 环境 (Set up Python ${{ matrix.python-version }})
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
 
-    - name: 运行测试用例 (Run unit tests)
-      run: |
-        python -m unittest test_marshal_suite.py -v
+      - name: Show runtime information
+        run: |
+          python --version
+          python -c "import marshal; print('marshal.version =', marshal.version)"
+
+      - name: Compile test file
+        run: |
+          python -m py_compile test_marshal_suite.py
+
+      - name: Run marshal test suite
+        run: |
+          python -m unittest discover -s . -p "test_*.py" -v
