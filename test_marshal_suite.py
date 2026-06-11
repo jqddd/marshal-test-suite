@@ -400,13 +400,13 @@ class TestMarshalStability(unittest.TestCase):
         seeds produce different byte streams.
         """
         sub_code = """
-    import hashlib
-    import marshal
+import hashlib
+import marshal
 
-    test_set = {"alpha", "bravo", "charlie", "delta", "echo", "foxtrot"}
-    dumped = marshal.dumps(test_set, 4)
-    print(hashlib.sha256(dumped).hexdigest(), end="")
-    """
+test_set = {"alpha", "bravo", "charlie", "delta", "echo", "foxtrot"}
+dumped = marshal.dumps(test_set, 4)
+print(hashlib.sha256(dumped).hexdigest(), end="")
+"""
 
         seeds = ["0", "1", "2", "3", "42", "123"]
         hashes_by_seed = {}
