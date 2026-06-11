@@ -399,61 +399,61 @@ class TestMarshalStability(unittest.TestCase):
         repeatable when the hash seed is fixed, and records whether different
         seeds produce different byte streams.
         """
-    sub_code = """
-import hashlib
-import marshal
+        sub_code = """
+    import hashlib
+    import marshal
 
-test_set = {"alpha", "bravo", "charlie", "delta", "echo", "foxtrot"}
-dumped = marshal.dumps(test_set, 4)
-print(hashlib.sha256(dumped).hexdigest(), end="")
-"""
+    test_set = {"alpha", "bravo", "charlie", "delta", "echo", "foxtrot"}
+    dumped = marshal.dumps(test_set, 4)
+    print(hashlib.sha256(dumped).hexdigest(), end="")
+    """
 
-    seeds = ["0", "1", "2", "3", "42", "123"]
-    hashes_by_seed = {}
+        seeds = ["0", "1", "2", "3", "42", "123"]
+        hashes_by_seed = {}
 
-    for seed in seeds:
-        env = dict(os.environ)
-        env["PYTHONHASHSEED"] = seed
+        for seed in seeds:
+            env = dict(os.environ)
+            env["PYTHONHASHSEED"] = seed
 
-        first = subprocess.run(
-            [sys.executable, "-c", sub_code],
-            capture_output=True,
-            text=True,
-            env=env,
-            check=True,
-        ).stdout.strip()
+            first = subprocess.run(
+                [sys.executable, "-c", sub_code],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=True,
+            ).stdout.strip()
 
-        second = subprocess.run(
-            [sys.executable, "-c", sub_code],
-            capture_output=True,
-            text=True,
-            env=env,
-            check=True,
-        ).stdout.strip()
+            second = subprocess.run(
+                [sys.executable, "-c", sub_code],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=True,
+            ).stdout.strip()
 
-        self.assertEqual(
-            first,
-            second,
-            f"Set serialization was not repeatable with PYTHONHASHSEED={seed}.",
-        )
+            self.assertEqual(
+                first,
+                second,
+                f"Set serialization was not repeatable with PYTHONHASHSEED={seed}.",
+            )
 
-        hashes_by_seed[seed] = first
+            hashes_by_seed[seed] = first
 
-    unique_hashes = set(hashes_by_seed.values())
+        unique_hashes = set(hashes_by_seed.values())
 
-    print(f"\n[CI-LOG] Set hashes by PYTHONHASHSEED: {hashes_by_seed}")
-    print(f"[CI-LOG] Unique set hashes: {len(unique_hashes)}")
+        print(f"\n[CI-LOG] Set hashes by PYTHONHASHSEED: {hashes_by_seed}")
+        print(f"[CI-LOG] Unique set hashes: {len(unique_hashes)}")
 
-    if len(unique_hashes) > 1:
-        print(
-            "[CI-LOG] Observation: set serialization changed across "
-            "different hash seeds."
-        )
-    else:
-        print(
-            "[CI-LOG] Observation: set serialization remained stable across "
-            "the tested hash seeds."
-        )
+        if len(unique_hashes) > 1:
+            print(
+                "[CI-LOG] Observation: set serialization changed across "
+                "different hash seeds."
+            )
+        else:
+            print(
+                "[CI-LOG] Observation: set serialization remained stable across "
+                "the tested hash seeds."
+            )
 
     # ------------------------------------------------------------------
     # 6. Deterministic random fuzzing
