@@ -1,246 +1,523 @@
 """
-Python `marshal` Module Test Suite for Stability and Correctness.
-Complies with PEP 8. Developed for Software Testing Midterm Assignment.
-Combines Black-box (EP, BVA) and White-box (Internal Logic Coverage) approaches.
+Test suite for Python's marshal module.
+
+The suite checks byte-level determinism, round-trip correctness,
+boundary values, negative inputs, cyclic/shared references, protocol
+differences, and deterministic fuzzing.
+
+It is designed for the software testing assignment on marshal stability.
 """
 
-import marshal
-import unittest
 import hashlib
-import sys
+import math
+import marshal
+import os
+import random
 import subprocess
+import sys
+import textwrap
+import unittest
+
+
+MARSHAL_FORMAT_VERSION = 4
 
 
 class TestMarshalStability(unittest.TestCase):
-    """Main test suite exploring the determinism limits of the marshal module."""
+    """Tests for marshal stability and correctness."""
 
-    # ==============================================================================
-    # 区域 1：确定性与稳定区 (Deterministic Baseline)
-    # ==============================================================================
+    def assert_stable_dump(self, value, version=MARSHAL_FORMAT_VERSION):
+        """Assert that repeated dumps of the same value are byte-identical."""
+        dumped_once = marshal.dumps(value, version)
+        dumped_twice = marshal.dumps(value, version)
+        self.assertEqual(
+            dumped_once,
+            dumped_twice,
+            "The same input must produce the same byte stream.",
+        )
+        return dumped_once
 
+    def assert_round_trip_equal(self, value, version=MARSHAL_FORMAT_VERSION):
+        """Assert byte determinism and round-trip logical correctness."""
+        dumped = self.assert_stable_dump(value, version)
+        loaded = marshal.loads(dumped)
+        self.assertEqual(value, loaded)
+        return loaded
+
+    # ------------------------------------------------------------------
+    # 1. Deterministic baseline: equivalence partitioning
+    # ------------------------------------------------------------------
 
     def test_primitive_determinism_and_correctness(self):
         """
-        Black-box - Equivalence Partitioning (EP):
-        Verifies both Cross-Serialization Determinism AND Round-trip Correctness.
-        """
-        data = [1024, -1024, "A standard string", b"A byte string", True, False, None]
-        for item in data:
-            with self.subTest(item=item):
-                dumped = marshal.dumps(item)
-                
-                # 1. 测试确定性 (Determinism - 契合作业核心要求)
-                self.assertEqual(
-                    dumped, marshal.dumps(item), 
-                    "Primitives must produce deterministic byte streams."
-                )
-                
-                # 2. 测试正确性/可逆性 (Round-trip Correctness - 你的核心洞察)
-                self.assertEqual(
-                    item, marshal.loads(dumped), 
-                    "Deserialized object must mathematically equal the original input."
-                )
+        Black-box testing: equivalence partitioning.
 
+        Covers primitive supported values and verifies:
+        1. repeated serialization is byte-identical;
+        2. deserialization reconstructs an equivalent object.
+        """
+        values = [
+            None,
+            True,
+            False,
+            1024,
+            -1024,
+            "A standard string",
+            b"A byte string",
+        ]
+
+        for value in values:
+            with self.subTest(value=repr(value)):
+                self.assert_round_trip_equal(value)
+
+    def test_collection_determinism_and_correctness(self):
+        """
+        Black-box testing: equivalence partitioning.
+
+        Covers supported collection types and nested structures.
+        """
+        values = [
+            [],
+            (),
+            {},
+            set(),
+            frozenset(),
+            [1, 2, 3],
+            (1, "a", b"b"),
+            {"key": [1, 2, 3], "value": "CrossPlatformTestData"},
+            {"nested": [{"x": (1, 2)}, {"y": b"bytes"}]},
+            {"set": {1, 2, 3}, "frozen": frozenset({"a", "b"})},
+        ]
+
+        for value in values:
+            with self.subTest(value=repr(value)):
+                self.assert_round_trip_equal(value)
+
+    # ------------------------------------------------------------------
+    # 2. Boundary value analysis
+    # ------------------------------------------------------------------
 
     def test_integer_boundary_values(self):
         """
-        Black-box - Boundary Value Analysis (BVA):
-        Tests memory boundaries for integers in the underlying C layer (marshal.c).
-        """
-        boundaries = [0, -1, 1, 2**31 - 1, -2**31, 2**63 - 1, -2**63, 2**128]
-        for val in boundaries:
-            with self.subTest(val=val):
-                dumped = marshal.dumps(val)
-                loaded = marshal.loads(dumped)
-                self.assertEqual(val, loaded, f"Data loss for boundary integer: {val}")
+        Black-box testing: boundary value analysis.
 
-    def test_floating_point_anomalies(self):
+        Covers zero, sign boundaries, 32-bit/64-bit boundaries,
+        and integers larger than machine-word size.
         """
-        Black-box - Boundary Value Analysis (BVA):
-        Tests IEEE 754 extreme floating-point values (Infinities and NaN).
-        """
-        self.assertEqual(marshal.dumps(float('inf')), marshal.dumps(float('inf')))
-        self.assertEqual(marshal.dumps(float('-inf')), marshal.dumps(float('-inf')))
-        
-        # Single-process NaN check
-        nan1 = float('nan')
-        nan2 = float('nan')
-        self.assertEqual(marshal.dumps(nan1), marshal.dumps(nan2))
+        values = [
+            0,
+            -1,
+            1,
+            2**31 - 1,
+            2**31,
+            -(2**31),
+            2**63 - 1,
+            2**63,
+            -(2**63),
+            2**128,
+            -(2**128),
+        ]
 
-    def test_cyclic_structures_support(self):
+        for value in values:
+            with self.subTest(value=value):
+                self.assert_round_trip_equal(value)
+
+    def test_unicode_and_bytes_boundaries(self):
         """
-        White-box - Internal Logic Coverage (CPython Reference Tracking):
-        Verifies that marshal correctly leverages the internal FLAG_REF mechanism 
-        to serialize cyclic objects without stack overflow in protocol v3+.
+        Black-box testing: boundary value analysis.
+
+        Covers empty, short, Unicode, emoji, Chinese text, and
+        large strings/bytes.
+        """
+        string_values = [
+            "",
+            "a",
+            "ASCII text",
+            "中文字符串",
+            "emoji🙂test",
+            "a" * 100_000,
+        ]
+        bytes_values = [
+            b"",
+            b"a",
+            bytes(range(256)),
+            b"x" * 100_000,
+        ]
+
+        for value in string_values + bytes_values:
+            with self.subTest(type=type(value).__name__, length=len(value)):
+                self.assert_round_trip_equal(value)
+
+    def test_collection_boundaries(self):
+        """
+        Black-box testing: boundary value analysis.
+
+        Covers empty, single-element, and large collections.
+        """
+        values = [
+            [],
+            [1],
+            list(range(100_000)),
+            {},
+            {"only": 1},
+            {str(i): i for i in range(1_000)},
+            (),
+            (1,),
+            tuple(range(10_000)),
+        ]
+
+        for value in values:
+            with self.subTest(type=type(value).__name__):
+                self.assert_round_trip_equal(value)
+
+    def test_floating_point_special_values(self):
+        """
+        Black-box testing: boundary value analysis.
+
+        Covers IEEE-754 special values. NaN requires special checking
+        because NaN is not equal to itself.
+        """
+        finite_values = [
+            0.0,
+            1.0,
+            -1.0,
+            sys.float_info.min,
+            sys.float_info.max,
+            float("inf"),
+            float("-inf"),
+        ]
+
+        for value in finite_values:
+            with self.subTest(value=value):
+                self.assert_round_trip_equal(value)
+
+        negative_zero = -0.0
+        loaded_negative_zero = marshal.loads(
+            self.assert_stable_dump(negative_zero)
+        )
+        self.assertEqual(math.copysign(1.0, loaded_negative_zero), -1.0)
+
+        nan_value = float("nan")
+        loaded_nan = marshal.loads(self.assert_stable_dump(nan_value))
+        self.assertTrue(math.isnan(loaded_nan))
+
+        self.assertEqual(
+            marshal.dumps(float("nan"), MARSHAL_FORMAT_VERSION),
+            marshal.dumps(float("nan"), MARSHAL_FORMAT_VERSION),
+        )
+
+    def test_complex_number_round_trip(self):
+        """Black-box testing: complex-number correctness and determinism."""
+        values = [
+            0j,
+            1 + 2j,
+            -3.5 + 4.25j,
+            complex(float("inf"), -0.0),
+        ]
+
+        for value in values:
+            with self.subTest(value=value):
+                loaded = self.assert_round_trip_equal(value)
+                if value.imag == 0.0:
+                    self.assertEqual(
+                        math.copysign(1.0, loaded.imag),
+                        math.copysign(1.0, value.imag),
+                    )
+
+    def test_extreme_deep_nesting_is_rejected_safely(self):
+        """
+        Black-box testing: robustness boundary.
+
+        Deeply nested objects should raise a Python exception instead
+        of crashing the interpreter.
+        """
+        deep_object = None
+        for _ in range(5_000):
+            deep_object = [deep_object]
+
+        with self.assertRaises(ValueError) as context:
+            marshal.dumps(deep_object, MARSHAL_FORMAT_VERSION)
+
+        self.assertIn("object too deeply nested", str(context.exception))
+
+    # ------------------------------------------------------------------
+    # 3. White-box inspired tests: reference tracking and protocols
+    # ------------------------------------------------------------------
+
+    def test_cyclic_structures_supported_in_protocol_v3_plus(self):
+        """
+        White-box inspired testing.
+
+        Protocol v3+ uses reference tracking, so cyclic objects can be
+        serialized and their topology should be preserved.
         """
         cyclic_list = []
         cyclic_list.append(cyclic_list)
+
         dumped = marshal.dumps(cyclic_list, 3)
         loaded = marshal.loads(dumped)
-        self.assertIs(loaded[0], loaded, "Cyclic topology must be correctly preserved.")
+
+        self.assertIs(loaded[0], loaded)
+
+    def test_protocol_version_degradation_for_cycles(self):
+        """
+        White-box inspired testing.
+
+        Older marshal protocol versions do not support cyclic reference
+        tracking, while protocol v3+ does.
+        """
+        cyclic_list = []
+        cyclic_list.append(cyclic_list)
+
+        with self.assertRaises(ValueError):
+            marshal.dumps(cyclic_list, 0)
+
+        dumped_v3 = marshal.dumps(cyclic_list, 3)
+        loaded_v3 = marshal.loads(dumped_v3)
+
+        self.assertIs(loaded_v3[0], loaded_v3)
+
+    def test_shared_reference_identity_is_preserved(self):
+        """
+        White-box inspired testing.
+
+        Checks whether non-cyclic shared references are reconstructed as
+        shared objects after unmarshalling.
+        """
+        shared_dict = {"secret": 42}
+        original = [shared_dict, shared_dict]
+
+        loaded = marshal.loads(marshal.dumps(original, 3))
+
+        self.assertIs(loaded[0], loaded[1])
+        self.assertEqual(loaded[0], {"secret": 42})
+
+    def test_code_object_same_runtime_determinism_is_recorded(self):
+        """
+        White-box inspired testing for internal type support.
+
+        Code objects are internal CPython objects. Their byte streams are
+        expected to vary across Python versions, but repeated dumps inside
+        the same runtime should still be deterministic.
+        """
+        def sample_function(value):
+            return value + 1
+
+        code_object = sample_function.__code__
+        dumped_once = marshal.dumps(code_object, MARSHAL_FORMAT_VERSION)
+        dumped_twice = marshal.dumps(code_object, MARSHAL_FORMAT_VERSION)
+
+        self.assertEqual(dumped_once, dumped_twice)
+
+        current_hash = hashlib.sha256(dumped_once).hexdigest()
+        print(
+            "\n[CI-LOG] Code object observation: "
+            f"platform={sys.platform}, "
+            f"python={sys.version_info.major}.{sys.version_info.minor}, "
+            f"marshal_version={marshal.version}, "
+            f"sha256={current_hash}"
+        )
+
+    # ------------------------------------------------------------------
+    # 4. Negative testing and malformed input fuzzing
+    # ------------------------------------------------------------------
 
     def test_unmarshallable_object_rejection(self):
         """
-        Black-box - Exception Handling (Negative Testing):
-        Ensures user-defined custom classes are safely rejected with a ValueError.
+        Black-box testing: negative testing.
+
+        User-defined custom objects are not supported by marshal and
+        should be rejected safely.
         """
         class CustomClass:
             pass
+
         with self.assertRaises(ValueError) as context:
-            marshal.dumps(CustomClass())
+            marshal.dumps(CustomClass(), MARSHAL_FORMAT_VERSION)
+
         self.assertIn("unmarshallable object", str(context.exception))
 
-    def test_collection_boundaries(self):
-        """Black-box - BVA: Tests empty collections and large capacities."""
-        empty_dict, empty_list, empty_tuple = {}, [], ()
-        self.assertEqual(empty_dict, marshal.loads(marshal.dumps(empty_dict)))
-        self.assertEqual(empty_list, marshal.loads(marshal.dumps(empty_list)))
-        self.assertEqual(empty_tuple, marshal.loads(marshal.dumps(empty_tuple)))
-
-        large_list = list(range(100_000))
-        self.assertEqual(large_list, marshal.loads(marshal.dumps(large_list)))
-
-    # ==============================================================================
-    # 区域 2：不确定性与崩溃区 (Non-Determinism Discovery - The Assignment Core)
-    # ==============================================================================
-
-    def test_cross_os_primitive_determinism(self):
+    def test_malformed_bytes_are_rejected_safely(self):
         """
-        Cross-OS Determinism Test (Safe Subset).
-        Asserts that standard alphanumeric data maps to the exact same hash across OS matrix.
+        Black-box testing: malformed input robustness.
+
+        Invalid byte streams should raise Python exceptions instead of
+        crashing the interpreter.
         """
-        standard_data = {"key": [1, 2, 3], "value": "CrossPlatformTestData"}
-        dumped_bytes = marshal.dumps(standard_data)
-        current_hash = hashlib.sha256(dumped_bytes).hexdigest()
-        
-        print(f"\n[CI-LOG] OS: {sys.platform}, Python: {sys.version_info.major}.{sys.version_info.minor}")
-        print(f"[CI-LOG] Hash: {current_hash}")
-        
-        # This hash is universally identical for primitives under 3.9-3.12
-        expected_hash = "357b5c0366cc35181791b658305fdb7c43de23b15d1eac0bc73b3131d9a73bd5"
+        malformed_streams = [
+            b"x\x00\x00\x00\x00",
+            b"s\xff\xff\xff\xffbad_data",
+            b"(",
+            b"\xda" * 100,
+        ]
+
+        expected_exceptions = (ValueError, EOFError, TypeError)
+
+        for stream in malformed_streams:
+            with self.subTest(stream=stream):
+                with self.assertRaises(expected_exceptions):
+                    marshal.loads(stream)
+
+    # ------------------------------------------------------------------
+    # 5. Cross-process / cross-OS stability experiments
+    # ------------------------------------------------------------------
+
+    def test_cross_os_primitive_hash_is_stable_for_version_4(self):
+        """
+        Cross-OS determinism test.
+
+        This test uses an explicit marshal format version to avoid
+        accidental changes caused by future default-version changes.
+        """
+        standard_data = {
+            "key": [1, 2, 3],
+            "value": "CrossPlatformTestData",
+        }
+
+        dumped = marshal.dumps(standard_data, MARSHAL_FORMAT_VERSION)
+        current_hash = hashlib.sha256(dumped).hexdigest()
+
+        print(
+            "\n[CI-LOG] Primitive observation: "
+            f"platform={sys.platform}, "
+            f"python={sys.version_info.major}.{sys.version_info.minor}, "
+            f"sha256={current_hash}"
+        )
+
+        expected_hash = (
+            "357b5c0366cc35181791b658305fdb7c43de23b15d1eac0"
+            "bc73b3131d9a73bd5"
+        )
         self.assertEqual(current_hash, expected_hash)
 
-    def test_set_nondeterminism_fail(self):
+    def test_set_serialization_stability_across_hash_seeds(self):
         """
-        CRITICAL FINDING: Destructive testing for unordered collections (Set).
-        Demonstrates that marshal outputs are NOT stable across different process lifecycles
-        due to CPython's default Hash Randomization (PYTHONHASHSEED).
-        """
-        # Script code to execute in an independent sub-process
-        sub_code = """
-import marshal, hashlib
-test_set = {1, 2, "a", "b", 3.14}
-print(hashlib.sha256(marshal.dumps(test_set)).hexdigest(), end="")
-"""
-        # Execute Process 1
-        p1 = subprocess.run([sys.executable, "-c", sub_code], capture_output=True, text=True)
-        hash_run_1 = p1.stdout.strip()
+        Cross-process stability test for unordered collections.
 
-        # Execute Process 2
-        p2 = subprocess.run([sys.executable, "-c", sub_code], capture_output=True, text=True)
-        hash_run_2 = p2.stdout.strip()
+        This test does not assume sets are unstable. Instead, it checks
+        whether marshal output remains identical under different
+        PYTHONHASHSEED values and records the observed hashes.
+        """
+        sub_code = textwrap.dedent(
+            f"""\
+            import hashlib
+            import marshal
 
-        print(f"\n[STABILITY-BUG] Set Process 1 Hash: {hash_run_1}")
-        print(f"[STABILITY-BUG] Set Process 2 Hash: {hash_run_2}")
+            test_set = {{"alpha", "bravo", "charlie", "delta", "echo"}}
+            dumped = marshal.dumps(test_set, {MARSHAL_FORMAT_VERSION})
+            print(hashlib.sha256(dumped).hexdigest(), end="")
+            """
+        )
 
-        # Intentional Assertion: We EXPECT it to fail if it's non-deterministic cross-process.
-        # To make the test pass while proving the bug, we log the failure instead of hard crashing the CI.
-        if hash_run_1 != hash_run_2:
-            print("[RESULT] Verified Unstable Case: Set serialization violates cross-process determinism!")
-        else:
-            print("[RESULT] Warning: Hash collision occurred in set order.")
+        hashes = set()
+        seeds = ["0", "1", "2", "3", "42", "random"]
 
-    def test_code_object_version_fail(self):
-        """
-        CRITICAL FINDING: Destructive testing for internal types (Code Objects).
-        Demonstrates that marshal format changes dynamically across Python versions,
-        violating long-term serialization stability.
-        """
-        def sample_function():
-            pass
+        for seed in seeds:
+            env = dict(os.environ)
+            env["PYTHONHASHSEED"] = seed
 
-        # Check hash of a code object inside the current runtime
-        code_obj = sample_function.__code__
-        current_hash = hashlib.sha256(marshal.dumps(code_obj)).hexdigest()
-        print(f"\n[VERSION-BUG] Current runtime Code Object Hash: {current_hash}")
-        
-        # Hardcoded expected hash from Python 3.12 (Windows)
-        # If run under Python 3.9 or 3.10, this will naturally and correctly FAIL, 
-        # exposing the version instability that the assignment text warns about!
-        reference_312_hash = "64-bit-hash-placeholder-or-dynamic" 
-        print("Note: Code objects serialize differently across major releases due to AST and compiler optimizations.")
-    
-    def test_fuzzing_malformed_bytes(self):
-        """
-        Black-box - Fuzzing / Robustness:
-        向 marshal.loads 注入随机畸形字节流，验证底层 C 语言解析器
-        是否会发生内存越界崩溃，还是能安全地抛出 Python 异常。
-        """
-        # 伪造一个非法的标识符 'x'，或者长度被恶意篡改的字符串头
-        malformed_streams = [
-            b'x\x00\x00\x00\x00',          # 未知的类型标识符
-            b's\xff\xff\xff\xffbad_data',  # 声明了超大长度但数据截断的字符串
-            b'(',                          # 只有元组开始符，没有内容
-            b'\xda' * 100                  # 纯粹的垃圾内存数据
-        ]
-        
-        for bad_stream in malformed_streams:
-            with self.subTest(stream=bad_stream):
-                # 预期行为：必须安全地抛出异常，绝对不能让解释器硬崩溃
-                with self.assertRaises((ValueError, EOFError, TypeError)):
-                    marshal.loads(bad_stream)
+            result = subprocess.run(
+                [sys.executable, "-c", sub_code],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=True,
+            )
+            hashes.add(result.stdout.strip())
 
-    
-    def test_extreme_deep_nesting(self):
-        """
-        Black-box - Boundary Value Analysis (Vertical Depth):
-        测试极其深层的嵌套结构，验证 marshal 的递归深度保护机制。
-        """
-        # 构造一个深度为 5000 层的俄罗斯套娃列表：[[[[...]]]]
-        deep_obj = None
-        for _ in range(5000):
-            deep_obj = [deep_obj]
-            
-        # 预期行为：marshal 底层必须有深度防御机制，主动抛出 ValueError，而不是把 C 堆栈撑爆
-        with self.assertRaises(ValueError) as context:
-            marshal.dumps(deep_obj)
-            
-        self.assertIn("object too deeply nested", str(context.exception))
-    
+        print(f"\n[CI-LOG] Set hashes across seeds: {sorted(hashes)}")
 
-    def test_protocol_version_degradation(self):
-        """
-        White-box - Protocol Version Analysis:
-        对比旧版协议 (v0) 与新版协议 (v3+) 的健壮性差异。
-        """
-        # 构造一个包含循环引用的对象
-        cyclic = []
-        cyclic.append(cyclic)
-        
-        # 1. 在古老的 v0 协议中，没有 FLAG_REF 引用追踪，必定会抛出嵌套异常
-        with self.assertRaises(ValueError):
-            marshal.dumps(cyclic, 0)  # 修复：直接传位置参数 0
-            
-        # 2. 在现代 v3+ 协议中，必须能完美序列化
-        dumped_v3 = marshal.dumps(cyclic, 3)  # 修复：直接传位置参数 3
-        self.assertIsInstance(dumped_v3, bytes)
-        
+        self.assertEqual(
+            len(hashes),
+            1,
+            "Set serialization changed across PYTHONHASHSEED values.",
+        )
 
-    def test_shared_reference_identity(self):
-        """
-        White-box - Internal Logic Coverage (Object Pool & Identity):
-        测试非循环的共享引用，验证反序列化后对象的内存身份 (id) 是否被正确复原。
-        """
-        shared_dict = {"secret": 42}
-        # main_list 里的两个元素指向内存中的同一个字典
-        main_list = [shared_dict, shared_dict]
-        
-        # 使用协议 v3+ 进行序列化和反序列化
-        loaded = marshal.loads(marshal.dumps(main_list, 3))  # 修复：直接传位置参数 3
-        
-        # 断言：反序列化后，列表的第一个元素和第二个元素必须在内存中是同一个对象 (is 关键字)
-        self.assertIs(loaded[0], loaded[1], "Shared object identity was lost during unmarshalling!")
+    # ------------------------------------------------------------------
+    # 6. Deterministic random fuzzing
+    # ------------------------------------------------------------------
 
+    def make_random_marshal_object(self, rng, depth=0):
+        """
+        Generate a deterministic random marshal-compatible object.
+
+        This is a lightweight property-based fuzzing substitute that uses
+        only the Python standard library.
+        """
+        if depth >= 4:
+            terminal_values = [
+                None,
+                True,
+                False,
+                rng.randint(-(2**32), 2**32),
+                rng.uniform(-1_000_000.0, 1_000_000.0),
+                "".join(rng.choice("abcXYZ中文🙂") for _ in range(5)),
+                bytes(rng.randint(0, 255) for _ in range(5)),
+            ]
+            return rng.choice(terminal_values)
+
+        choice = rng.choice(
+            [
+                "none",
+                "bool",
+                "int",
+                "float",
+                "str",
+                "bytes",
+                "list",
+                "tuple",
+                "dict",
+            ]
+        )
+
+        if choice == "none":
+            return None
+        if choice == "bool":
+            return rng.choice([True, False])
+        if choice == "int":
+            return rng.randint(-(2**80), 2**80)
+        if choice == "float":
+            return rng.uniform(-1_000_000.0, 1_000_000.0)
+        if choice == "str":
+            length = rng.randint(0, 20)
+            return "".join(rng.choice("abcXYZ中文🙂") for _ in range(length))
+        if choice == "bytes":
+            length = rng.randint(0, 20)
+            return bytes(rng.randint(0, 255) for _ in range(length))
+        if choice == "list":
+            return [
+                self.make_random_marshal_object(rng, depth + 1)
+                for _ in range(rng.randint(0, 5))
+            ]
+        if choice == "tuple":
+            return tuple(
+                self.make_random_marshal_object(rng, depth + 1)
+                for _ in range(rng.randint(0, 5))
+            )
+
+        size = rng.randint(0, 5)
+        return {
+            f"k{i}_{rng.randint(0, 999)}": self.make_random_marshal_object(
+                rng,
+                depth + 1,
+            )
+            for i in range(size)
+        }
+
+    def test_deterministic_random_fuzzing(self):
+        """
+        Black-box testing: deterministic fuzzing.
+
+        Randomly generates supported nested objects and checks the core
+        properties of marshal:
+        1. repeated dumps are byte-identical;
+        2. loads(dumps(x)) is equal to x.
+        """
+        rng = random.Random(12345)
+
+        for index in range(200):
+            value = self.make_random_marshal_object(rng)
+            with self.subTest(index=index, value=repr(value)[:80]):
+                self.assert_round_trip_equal(value)
 
 
 if __name__ == "__main__":
