@@ -1,13 +1,3 @@
-"""
-Test suite for Python's marshal module.
-
-The suite checks byte-level determinism, round-trip correctness,
-boundary values, negative inputs, cyclic/shared references, protocol
-differences, and deterministic fuzzing.
-
-It is designed for the software testing assignment on marshal stability.
-"""
-
 import hashlib
 import math
 import marshal
@@ -23,7 +13,6 @@ MARSHAL_FORMAT_VERSION = 4
 
 
 class TestMarshalStability(unittest.TestCase):
-    """Tests for marshal stability and correctness."""
 
     def assert_stable_dump(self, value, version=MARSHAL_FORMAT_VERSION):
         """Assert that repeated dumps of the same value are byte-identical."""
